@@ -30,6 +30,7 @@ from ..lang.grid import Grid
 from ..lang.types import (
     Index,
 )
+from .nodes import CustomNode, PlaceholderNode, UnknownNode, TiledLoop
 
 from .regions import RegionGraph, SubgraphTracer
 
@@ -177,6 +178,31 @@ class CompiledContext(BaseContext):
             backed_sym_index_type(BoundedRelation(0, n, upper_inclusive=False))
             for n in grid_type.symbolic_shape
         ]
+        self.custom_ops: dict[str, CustomNode] = {}
+
+    def register_custom_op(self, name: str, op: CustomNode):
+        self.custom_ops[name] = op
+
+        def handler(*args, **kwargs):
+            node = op.handle(self.region_graph, *args, **kwargs)
+            return node.fx_node
+
+        if name != "tiled_loop":
+            setattr(self, f"handle_{name}", handler)
+
+    def node(self, node: fx.Node) -> CustomNode:
+        for name, nodeT in self.custom_ops.items():
+            # The fx_nodes have a suffix depending on the number of occurrences
+            # of similar nodes. We are only interested in the name prefix.
+
+            # TODO: Instead simply shape the suffix off, as this depends on the
+            #       iteration order for nodes sharing a prefic,
+            #       e.g. read and read_shared
+            if node.name.startswith(name):
+                return nodeT.from_fx_node(node)
+            if node.op == "placeholder":
+                return PlaceholderNode.from_fx_node(node)
+        return UnknownNode.from_fx_node(node)
 
     ### ========================================================================
     ### Core Operations
@@ -369,6 +395,21 @@ class CompiledContext(BaseContext):
             kwargs={},
         )
 
+    ### ========================================================================
+    ### TKF Operations
+    ### ========================================================================
+
+    # TODO: Get this handler from the custom node as well.
+    def handle_tiled_loop(self, op, axis: IndexExpr, init_args=[]):
+        def wrapper(f):
+            with self.region_graph.subtracer() as subtracer:
+                subgraph_name, implicit_capture = subtracer.trace(f)
+            node = TiledLoop(op, axis, init_args, subgraph_name, implicit_capture)
+            node.add_to_graph(self.region_graph)
+            return node.fx_node
+
+        return wrapper
+
 
 ###############################################################################
 # Launch context
@@ -389,14 +430,11 @@ class Launchable(ABC):
         return launch_context.launch(self, args, kwargs)
 
     @abstractmethod
-    def eager_execute(self, args, kwargs):
-        ...
+    def eager_execute(self, args, kwargs): ...
 
-    def aot_execute(self, args, kwargs):
-        ...
+    def aot_execute(self, args, kwargs): ...
 
-    def test_execute(self, args, kwargs):
-        ...
+    def test_execute(self, args, kwargs): ...
 
 
 class LaunchContext(ABC):
@@ -435,8 +473,7 @@ class LaunchContext(ABC):
         context.pop(LaunchContext, self)
 
     @abstractmethod
-    def launch(self, launchable: Launchable, args, kwargs):
-        ...
+    def launch(self, launchable: Launchable, args, kwargs): ...
 
 
 class DebugLaunchContext(LaunchContext):

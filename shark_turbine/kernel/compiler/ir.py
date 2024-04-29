@@ -22,22 +22,28 @@ from iree.compiler.ir import (
     IntegerType,
     Location,
     Operation,
+    OpResult,
     MemRefType,
     ShapedType,
     StringAttr,
     SymbolTable,
     Type as IrType,
+    UnitAttr,
     Value,
     VectorType,
 )
 
 from iree.compiler.dialects import (
+    amdgpu as amdgpu_d,
     arith as arith_d,
     builtin as builtin_d,
     flow as flow_d,
     func as func_d,
+    gpu as gpu_d,
     math as math_d,
+    memref as memref_d,
     stream as stream_d,
+    transform as transform_d,
     vector as vector_d,
     scf as scf_d,
 )
